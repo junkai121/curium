@@ -173,6 +173,7 @@ func Test_handleMsgRead(t *testing.T) {
 	}
 }
 
+
 func Test_handleMsgUpdate(t *testing.T) {
 	mockCtrl, mockKeeper, ctx, owner := initTest(t)
 	defer mockCtrl.Finish()

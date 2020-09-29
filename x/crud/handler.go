@@ -29,6 +29,8 @@ func NewHandler(keeper keeper.IKeeper) sdk.Handler {
 		switch msg := msg.(type) {
 		case types.MsgCreate:
 			return handleMsgCreate(ctx, keeper, msg)
+		case types.MsgUpsert:
+			return handleMsgUpsert(ctx, keeper, msg)
 		case types.MsgRead:
 			return handleMsgRead(ctx, keeper, msg)
 		case types.MsgUpdate:
@@ -114,6 +116,50 @@ func handleMsgRead(ctx sdk.Context, keeper keeper.IKeeper, msg types.MsgRead) (*
 }
 
 func handleMsgUpdate(ctx sdk.Context, keeper keeper.IKeeper, msg types.MsgUpdate) (*sdk.Result, error) {
+	if len(msg.UUID) == 0 || len(msg.Key) == 0 || msg.Owner.Empty() {
+		return nil, sdkerrors.Wrap(sdkerrors.ErrInvalidRequest, "Invalid message")
+	}
+
+	owner := keeper.GetOwner(ctx, keeper.GetKVStore(ctx), msg.UUID, msg.Key)
+	if owner.Empty() {
+		return nil, sdkerrors.Wrap(sdkerrors.ErrInvalidRequest, "Key does not exist")
+	}
+
+	if !msg.Owner.Equals(owner) {
+		return nil, sdkerrors.Wrap(sdkerrors.ErrInvalidRequest, "Incorrect Owner")
+	}
+
+	oldBlzValue := keeper.GetValue(ctx, keeper.GetKVStore(ctx), msg.UUID, msg.Key)
+
+	if msg.Lease != 0 { // 0 means no change to lease
+		newLease := oldBlzValue.Lease + msg.Lease
+		if newLease <= 0 {
+			return nil, sdkerrors.Wrap(sdkerrors.ErrInvalidRequest, "Invalid lease")
+		}
+
+		if (oldBlzValue.Height + newLease) <= ctx.BlockHeight() {
+			return nil, sdkerrors.Wrap(sdkerrors.ErrInvalidRequest, "Invalid lease")
+		}
+
+		keeper.SetValue(ctx, keeper.GetKVStore(ctx), msg.UUID, msg.Key, types.BLZValue{Value: msg.Value, Lease: newLease, Height: oldBlzValue.Height, Owner: msg.Owner})
+
+		leaseCtx := ctx.WithGasMeter(sdk.NewInfiniteGasMeter())
+		keeper.DeleteLease(keeper.GetLeaseStore(leaseCtx), msg.UUID, msg.Key, oldBlzValue.Height, oldBlzValue.Lease)
+		keeper.SetLease(keeper.GetLeaseStore(leaseCtx), msg.UUID, msg.Key, oldBlzValue.Height, newLease)
+
+	} else {
+		keeper.SetValue(ctx, keeper.GetKVStore(ctx), msg.UUID, msg.Key, types.BLZValue{Value: msg.Value, Lease: oldBlzValue.Lease,
+			Owner: msg.Owner, Height: oldBlzValue.Height});
+	}
+
+	gasForLease := CalculateGasForLease(oldBlzValue.Lease, msg.Lease, len(msg.UUID) + len(msg.Key) + len(oldBlzValue.Value), len(msg.UUID) + len(msg.Key) + len(msg.Value))
+	ctx.GasMeter().ConsumeGas(gasForLease, "lease")
+
+	return &sdk.Result{}, nil
+}
+
+
+func handleMsgUpsert(ctx sdk.Context, keeper keeper.IKeeper, msg types.MsgUpsert) (*sdk.Result, error) {
 	if len(msg.UUID) == 0 || len(msg.Key) == 0 || msg.Owner.Empty() {
 		return nil, sdkerrors.Wrap(sdkerrors.ErrInvalidRequest, "Invalid message")
 	}

@@ -55,6 +55,7 @@ func GetTxCmd(_ string, cdc *codec.Codec) *cobra.Command {
 		GetCmdRenewLease(cdc),
 		GetCmdRenewLeaseAll(cdc),
 		GetCmdUpdate(cdc),
+		GetCmdUpsert(cdc),
 	)...)
 
 	return crudTxCmd
@@ -103,6 +104,32 @@ func GetCmdRead(cdc *codec.Codec) *cobra.Command {
 		},
 	}
 }
+
+func GetCmdUpsert(cdc *codec.Codec) *cobra.Command {
+	cc := cobra.Command{
+		Use:   "upsert [UUID] [key] [value]",
+		Short: "create/update an entry in the database",
+		Args:  cobra.ExactArgs(3),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cliCtx := context.NewCLIContext().WithCodec(cdc)
+			inBuf := bufio.NewReader(cmd.InOrStdin())
+			txBldr := auth.NewTxBuilderFromCLI(inBuf).WithTxEncoder(utils.GetTxEncoder(cdc))
+			msg := types.MsgUpsert{UUID: args[0], Key: args[1], Value: args[2], Lease: leaseValue, Owner: cliCtx.GetFromAddress()}
+
+			err := msg.ValidateBasic()
+			if err != nil {
+				return err
+			}
+
+			return utils.GenerateOrBroadcastMsgs(cliCtx, txBldr, []sdk.Msg{msg})
+		},
+	}
+
+	cc.PersistentFlags().Int64Var(&leaseValue, "lease", 0, "lease in blocks (default 0 (no change))")
+	return &cc
+}
+
+
 
 func GetCmdUpdate(cdc *codec.Codec) *cobra.Command {
 	cc := cobra.Command{
